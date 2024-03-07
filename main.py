@@ -1,12 +1,9 @@
 import json
-import queue
+import requests
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 import multiprocessing
 
-import requests
-import threading
-
 base_url = 'https://dummyjson.com/products'
-
 
 def send_request_and_store_data(url, result_queue):
     response = requests.get(url)
@@ -14,39 +11,28 @@ def send_request_and_store_data(url, result_queue):
 
     result_queue.put(data)
 
+def process_worker(process_num, result_queue):
+    urls = [f"{base_url}/{i}" for i in range(20 * process_num + 1, 20 * (process_num + 1) + 1)]
 
-def worker(process_num, result_queue):
-    threads = []
-
-    for i in range(process_num * 20, (process_num + 1) * 20):
-        url = f"{base_url}/{i}"
-        thread = threading.Thread(target=send_request_and_store_data, args=(url, result_queue))
-        thread.start()
-        threads.append(thread)
-
-    for thread in threads:
-        thread.join()
-
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        for url in urls:
+            executor.submit(send_request_and_store_data, url, result_queue)
 
 if __name__ == "__main__":
     manager = multiprocessing.Manager()
     result_queue = manager.Queue()
-    file_lock = threading.Lock()
-
     processes = []
 
-    for i in range(5):
-        process = multiprocessing.Process(target=worker, args=(i, result_queue))
-        process.start()
-        processes.append(process)
-
-    for process in processes:
-        process.join()
+    with ProcessPoolExecutor(max_workers=5) as executor:
+        for i in range(5):
+            processes.append(executor.submit(process_worker, i, result_queue))
 
     all_data = []
-    while not result_queue.empty():
-        all_data.append(result_queue.get())
+    for process in processes:
+        process.result()
 
-    with file_lock:
-        with open("data.json", "w") as json_file:
-            json.dump(all_data, json_file, indent=2)
+        while not result_queue.empty():
+            all_data.append(result_queue.get())
+
+    with open("data.json", "w") as json_file:
+        json.dump(all_data, json_file, indent=2)
